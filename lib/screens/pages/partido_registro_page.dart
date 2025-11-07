@@ -71,6 +71,7 @@ class _PartidoRegistroPageState extends State<PartidoRegistroPage> {
   List<Evento> _eventos = [];
   List<String> _notasArbitro = [];
   Map<String, int> _resultado = {};
+  bool _cargandoFinalizar = false;
 
   @override
   void initState() {
@@ -160,6 +161,124 @@ class _PartidoRegistroPageState extends State<PartidoRegistroPage> {
       _actualizarPartidoCompletoEnBackend();
     });
   }
+  // ... (después de _eliminarNota)
+
+  // --- FUNCIÓN PARA ENVIAR ESTADÍSTICAS (NUEVA) ---
+  Future<bool> _enviarEstadisticas(
+    String equipoId,
+    int ganados,
+    int perdidos,
+    int empatados,
+    int puntos,
+  ) async {
+    final url = Uri.parse('http://10.0.2.2:8000/equipos/actualizar_estadisticas');
+    final payload = {
+      "id_equipo": equipoId,
+      "ganados": ganados,
+      "perdidos": perdidos,
+      "empatados": empatados,
+      "puntos": puntos,
+    };
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
+      // Asumimos que 200 (OK) es la respuesta correcta del backend
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Error al enviar estadísticas para $equipoId: $e');
+      return false;
+    }
+  }
+
+  // --- FUNCIÓN PRINCIPAL PARA FINALIZAR EL PARTIDO (NUEVA) ---
+  Future<void> _finalizarPartido() async {
+    if (_partido == null) return;
+
+    // 1. Confirmar
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder:
+          (_) => AlertDialog(
+            title: const Text('¿Finalizar partido?'),
+            content: const Text(
+              'Esta acción actualizará las estadísticas de los equipos con el resultado actual. ¿Continuar?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Finalizar'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmar != true || !mounted) return;
+
+    setState(() => _cargandoFinalizar = true);
+
+    // 2. Calcular resultados y puntos
+    final localId = _partido!.localId;
+    final visitanteId = _partido!.visitanteId;
+    final localScore = _resultado[localId] ?? 0;
+    final visitanteScore = _resultado[visitanteId] ?? 0;
+
+    // Asumimos: 3 puntos por victoria, 1 por empate, 0 por derrota
+    int gL = 0, pL = 0, eL = 0, ptsL = 0;
+    int gV = 0, pV = 0, eV = 0, ptsV = 0;
+
+    if (localScore > visitanteScore) {
+      gL = 1;
+      ptsL = 3;
+      pV = 1;
+      ptsV = 0; // Puntos por derrota
+    } else if (visitanteScore > localScore) {
+      pL = 1;
+      ptsL = 0; // Puntos por derrota
+      gV = 1;
+      ptsV = 3;
+    } else {
+      // Empate
+      eL = 1;
+      ptsL = 1;
+      eV = 1;
+      ptsV = 1;
+    }
+
+    // 3. Enviar actualizaciones al backend (una por equipo)
+    bool okLocal = await _enviarEstadisticas(localId, gL, pL, eL, ptsL);
+    bool okVisitante = await _enviarEstadisticas(visitanteId, gV, pV, eV, ptsV);
+
+    if (!mounted) return;
+    setState(() => _cargandoFinalizar = false);
+
+    // 4. Mostrar resultado
+    if (okLocal && okVisitante) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Partido finalizado. Estadísticas actualizadas.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pop(context); // Volver al panel de árbitro
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Error al actualizar estadísticas. Intenta de nuevo.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  // ... (resto del archivo)
 
   Future<void> _actualizarPartidoCompletoEnBackend() async {
     if (_partido == null) return;
@@ -318,6 +437,23 @@ class _PartidoRegistroPageState extends State<PartidoRegistroPage> {
         appBar: AppBar(
           title: const Text('Registro de Partido'),
           bottom: const TabBar(tabs: [Tab(text: 'EN VIVO'), Tab(text: 'NOTAS')]),
+          actions: [
+            if (_cargandoFinalizar)
+              const Padding(
+                padding: EdgeInsets.all(16.0),
+                child: SizedBox(
+                  width: 24, // Tamaño consistente
+                  height: 24, // Tamaño consistente
+                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                ),
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.check_circle_outline),
+                tooltip: 'Finalizar Partido',
+                onPressed: _finalizarPartido,
+              ),
+          ],
         ),
         body: TabBarView(children: [_buildLiveTab(l, v, fechaFmt), _buildNotasTab()]),
       ),

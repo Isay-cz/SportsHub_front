@@ -1,9 +1,12 @@
-// panel_director_page.dart
+// lib/screens/pages/panel_director_page.dart
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:typed_data'; // Importar para Uint8List
+import 'package:printing/printing.dart'; // Importar para compartir PDF
+import '../../services/reporte_service.dart'; // Importar el nuevo servicio
 
 import '../../clases.dart';
 import '../../providers/sesion_provider.dart';
@@ -25,6 +28,7 @@ class _PanelDirectorPageState extends State<PanelDirectorPage> {
     _cargarEquipoDelDirector();
   }
 
+  // --- (Esta función no cambió) ---
   Future<void> _cargarEquipoDelDirector() async {
     final sesion = Provider.of<SesionProvider>(context, listen: false);
     final directorId = sesion.id;
@@ -64,6 +68,7 @@ class _PanelDirectorPageState extends State<PanelDirectorPage> {
     }
   }
 
+  // --- (Esta función no cambió) ---
   void _mostrarPopupAgregarJugador() {
     final nombreCtrl = TextEditingController();
     final numeroCtrl = TextEditingController();
@@ -161,7 +166,7 @@ class _PanelDirectorPageState extends State<PanelDirectorPage> {
     });
   }
 
-  // --- NUEVA FUNCIÓN PARA ELIMINAR JUGADOR ---
+  // --- (Esta función no cambió) ---
   Future<void> _eliminarJugador(Jugador jugador) async {
     final confirmado = await showDialog<bool>(
       context: context,
@@ -213,6 +218,7 @@ class _PanelDirectorPageState extends State<PanelDirectorPage> {
     }
   }
 
+  // --- (Esta función no cambió) ---
   Widget _buildEstadistica(String label, int valor, Color color) {
     return Column(
       children: [
@@ -231,6 +237,91 @@ class _PanelDirectorPageState extends State<PanelDirectorPage> {
         Text(label, style: const TextStyle(fontSize: 14)),
       ],
     );
+  }
+
+  // --- FUNCIÓN _generarReporte ACTUALIZADA ---
+  Future<void> _generarReporte() async {
+    if (_equipo == null) return;
+
+    // 1. Mostrar loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // 2. Fetch TODOS los partidos (usando la nueva ruta)
+      final res = await http.get(
+        Uri.parse('http://10.0.2.2:8000/partidos/por_equipo/${_equipo!.id}'),
+      );
+
+      if (!mounted) return;
+      if (res.statusCode != 200) throw Exception('Error al cargar partidos');
+
+      final data = jsonDecode(res.body) as List;
+      final List<Partido> todosLosPartidos =
+          data.map((p) => Partido.fromJson(p)).toList();
+
+      // --- CAMBIO AQUÍ: Separar en dos listas ---
+      final List<Partido> jugados = [];
+      final List<Partido> futuros = [];
+      for (final p in todosLosPartidos) {
+        if (p.resultado != null && p.resultado!.isNotEmpty) {
+          jugados.add(p);
+        } else {
+          futuros.add(p);
+        }
+      }
+
+      // 3. Fetch nombres de oponentes (¡IMPORTANTE!)
+      final Map<String, String> nombresEquipos = {_equipo!.id: _equipo!.nombre};
+
+      // --- CAMBIO AQUÍ: Usar todosLosPartidos para buscar oponentes ---
+      final Set<String> oponentesIds = {};
+      for (final p in todosLosPartidos) {
+        // Usamos la lista completa
+        oponentesIds.add(p.localId);
+        oponentesIds.add(p.visitanteId);
+      }
+      oponentesIds.remove(_equipo!.id); // Quitamos nuestro propio ID
+
+      for (final id in oponentesIds) {
+        final resEquipo = await http.get(Uri.parse('http://10.0.2.2:8000/equipos/$id'));
+        if (resEquipo.statusCode == 200) {
+          nombresEquipos[id] = jsonDecode(resEquipo.body)['nombre'] ?? 'Desconocido';
+        } else {
+          nombresEquipos[id] = 'Desconocido';
+        }
+      }
+
+      // 4. Generar el PDF (usando el nuevo service)
+      // --- CAMBIO AQUÍ: Pasamos la lista de futuros ---
+      final Uint8List pdfBytes = await ReporteService.generarReporteEquipo(
+        _equipo!,
+        jugados,
+        futuros, // <--- Nueva lista
+        nombresEquipos,
+      );
+
+      // 5. Ocultar loading
+      if (mounted) Navigator.pop(context); // Cierra el loading dialog
+
+      // 6. Mostrar el PDF (usando 'printing')
+      await Printing.sharePdf(
+        bytes: pdfBytes,
+        filename: 'reporte_${_equipo!.nombre.replaceAll(' ', '_')}.pdf',
+      );
+    } catch (e) {
+      // Ocultar loading
+      if (mounted) Navigator.pop(context); // Cierra el loading dialog
+      debugPrint('Error al generar reporte: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo generar el reporte PDF')),
+        );
+      }
+    }
   }
 
   @override
@@ -256,7 +347,16 @@ class _PanelDirectorPageState extends State<PanelDirectorPage> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(_equipo!.nombre)),
+      appBar: AppBar(
+        title: Text(_equipo!.nombre),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            tooltip: 'Generar Reporte PDF',
+            onPressed: _generarReporte, // Llamamos a la nueva función
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

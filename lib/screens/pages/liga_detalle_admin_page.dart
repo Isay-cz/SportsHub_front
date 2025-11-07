@@ -1,7 +1,15 @@
+// lib/screens/pages/liga_detalle_admin_page.dart
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
+
+// --- AÑADIR IMPORTS PARA PDF ---
+import 'dart:typed_data';
+import 'package:printing/printing.dart';
+import '../../services/reporte_service.dart';
+// --- FIN DE IMPORTS ---
 
 import '../../clases.dart';
 import 'create_account_page.dart';
@@ -25,6 +33,8 @@ class _LigaDetalleAdminPageState extends State<LigaDetalleAdminPage>
   bool cargando = true;
   late Liga _liga;
 
+  bool _cargandoReporte = false; // <-- AÑADIR ESTADO DE CARGA
+
   @override
   void initState() {
     super.initState();
@@ -32,7 +42,9 @@ class _LigaDetalleAdminPageState extends State<LigaDetalleAdminPage>
     _refrescarLigaYDatos();
   }
 
+  // ... (Las funciones _refrescarLigaYDatos y cargarDatos no cambian) ...
   Future<void> _refrescarLigaYDatos() async {
+    // ... (código existente) ...
     final response = await http.get(
       Uri.parse('http://10.0.2.2:8000/ligas/${widget.liga.id}'),
     );
@@ -45,6 +57,7 @@ class _LigaDetalleAdminPageState extends State<LigaDetalleAdminPage>
   }
 
   Future<void> cargarDatos() async {
+    // ... (código existente) ...
     try {
       final liga = _liga;
       final List<Equipo> eqs = [];
@@ -94,6 +107,54 @@ class _LigaDetalleAdminPageState extends State<LigaDetalleAdminPage>
     }
   }
 
+  // --- AÑADIR NUEVA FUNCIÓN PARA GENERAR REPORTE ---
+  Future<void> _generarReporteLiga() async {
+    // No generar si los datos principales aún están cargando
+    if (cargando) return;
+
+    setState(() => _cargandoReporte = true);
+
+    // Mostrar un diálogo de carga simple
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      // Generar el PDF usando el servicio y los datos del estado
+      final Uint8List pdfBytes = await ReporteService.generarReporteLigaAdmin(
+        _liga,
+        equipos,
+        partidos,
+        arbitros,
+        directores,
+      );
+
+      if (!mounted) return;
+      Navigator.pop(context); // Cerrar el diálogo de carga
+
+      // Mostrar el diálogo para compartir/guardar el PDF
+      await Printing.sharePdf(
+        bytes: pdfBytes,
+        filename: 'reporte_liga_${_liga.nombre.replaceAll(' ', '_')}.pdf',
+      );
+    } catch (e) {
+      debugPrint('Error al generar reporte de liga: $e');
+      if (mounted) {
+        Navigator.pop(context); // Cerrar el diálogo de carga
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudo generar el reporte PDF')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cargandoReporte = false);
+      }
+    }
+  }
+
+  // ... (Todas las demás funciones: _buildPartidosTab, eliminarEquipo, _buildEquiposTab, _eliminarCuenta, _buildCuentasTab, _mostrarPopupCrearEquipo, etc., se mantienen EXACTAMENTE IGUAL) ...
   Widget _buildPartidosTab() {
     final Map<String, String> idToNombreEquipo = {for (var e in equipos) e.id: e.nombre};
 
@@ -578,6 +639,25 @@ class _LigaDetalleAdminPageState extends State<LigaDetalleAdminPage>
           unselectedLabelColor: Colors.white,
           labelColor: const Color.fromARGB(255, 151, 181, 233),
         ),
+        // --- INICIO DE MODIFICACIÓN ---
+        actions: [
+          if (_cargandoReporte)
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+              ),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.picture_as_pdf),
+              tooltip: 'Generar Reporte de Liga',
+              onPressed: _generarReporteLiga,
+            ),
+        ],
+        // --- FIN DE MODIFICACIÓN ---
       ),
       body:
           cargando
