@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'providers/sesion_provider.dart';
+import 'providers/novedad_provider.dart';
 import 'screens/splash_screen.dart';
 import 'screens/home_screen.dart';
 
@@ -11,7 +12,10 @@ void main() async {
 
   runApp(
     MultiProvider(
-      providers: [ChangeNotifierProvider(create: (context) => SesionProvider())],
+      providers: [
+        ChangeNotifierProvider(create: (context) => SesionProvider()),
+        ChangeNotifierProvider(create: (context) => NovedadProvider()),
+      ],
       child: const MyApp(),
     ),
   );
